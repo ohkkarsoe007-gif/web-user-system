@@ -58,7 +58,13 @@ function Terminal({ user, onLogout }: { user: User; onLogout: () => void }) {
     try {
       const result = await api<{ type: string; lines?: string[]; error?: string; downloadUrl?: string; file?: { name: string } }>("/api/terminal/execute", { method: "POST", body: JSON.stringify({ command: value }) });
       if (result.type === "help") setLines((old) => [...old, ...(result.lines || []).map((text) => ({ kind: "output" as const, text }))]);
-      else if (result.downloadUrl) setLines((old) => [...old, { kind: "output", text: `Access granted. Preparing ${result.file?.name || "download"}...` }, { kind: "output", text: "Download completed ✓" }]);
+      else if (result.downloadUrl) {
+        setLines((old) => [...old, { kind: "output", text: "Initializing..." }, { kind: "output", text: "Checking access..." }]);
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        setLines((old) => [...old, { kind: "output", text: "Access granted." }, { kind: "output", text: "Preparing download... ████████░░░░ 45%" }]);
+        await new Promise((resolve) => setTimeout(resolve, 260));
+        setLines((old) => [...old, { kind: "output", text: "Preparing download... ████████████████ 100%" }, { kind: "output", text: `Download completed ✓ ${result.file?.name || ""}` }]);
+      }
       else setLines((old) => [...old, { kind: "output", text: "Access granted. Target ready." }]);
       if (result.downloadUrl) window.location.assign(result.downloadUrl);
     } catch (e) { setLines((old) => [...old, { kind: "error", text: e instanceof Error ? e.message : "System error." }]); }
