@@ -35,7 +35,7 @@ const pool: Pool = mysql.createPool({
 });
 
 const migrationsDir = path.join(root, "database", "migrations");
-const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+const sha256 = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const sessionHash = (value: string) => sha256(`${env.sessionSecret}:${value}`);
 const newToken = () => randomBytes(32).toString("base64url");
 
@@ -131,9 +131,20 @@ function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
 const app = express();
 app.set("trust proxy", 1);
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "15mb" }));
 app.use(cookieParser());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: "draft-8", legacyHeaders: false }));
+app.use((req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method)) {
+    const origin = req.get("origin");
+    const configuredOrigin = process.env.APP_ORIGIN;
+    const localOrigins = new Set(["http://localhost:3000", "http://localhost:5173"]);
+    if (origin && configuredOrigin && origin !== configuredOrigin && !localOrigins.has(origin)) {
+      return res.status(403).json({ error: "Request origin is not allowed." });
+    }
+  }
+  next();
+});
 app.use(loadUser);
 
 const emailSchema = z.string().trim().toLowerCase().email().max(255);
@@ -387,6 +398,65 @@ app.get("/api/admin/folders", requireAdmin, async (_req, res, next) => {
   try {
     const [rows] = await pool.query("SELECT id, parent_id, name, status, created_at FROM folders ORDER BY parent_id, name");
     res.json({ folders: rows });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/admin/files", requireAdmin, async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT f.id, f.folder_id, f.original_name, f.size, f.mime_type, f.checksum, f.status, f.created_at, fo.name AS folder_name
+       FROM files f JOIN folders fo ON fo.id = f.folder_id ORDER BY f.created_at DESC`,
+    );
+    res.json({ files: rows });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/files", requireAdmin, async (req: AuthedRequest, res, next) => {
+  let storageKey = "";
+  try {
+    const body = z.object({
+      folderId: z.number().int().positive(),
+      originalName: z.string().trim().min(1).max(255).regex(/^[^/\\]+$/),
+      mimeType: z.string().trim().max(180).default("application/octet-stream"),
+      contentBase64: z.string().min(1),
+    }).parse(req.body);
+    const content = Buffer.from(body.contentBase64, "base64");
+    if (!content.length || content.length > env.maxUploadBytes) return res.status(413).json({ error: "File is too large or invalid." });
+    const [folders] = await pool.query<RowDataPacket[]>("SELECT id FROM folders WHERE id = ? AND status = 'active' LIMIT 1", [body.folderId]);
+    if (!folders.length) return res.status(404).json({ error: "Target unavailable." });
+    storageKey = `${randomBytes(24).toString("hex")}.bin`;
+    await fs.mkdir(env.storageRoot, { recursive: true });
+    await fs.writeFile(path.join(env.storageRoot, storageKey), content, { flag: "wx" });
+    await pool.query(
+      `INSERT INTO files (folder_id, original_name, storage_key, size, mime_type, checksum, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [body.folderId, body.originalName, storageKey, content.length, body.mimeType, sha256(content), req.user!.id],
+    );
+    await recordActivity(req.user!.id, "FILE_UPLOADED", req, `Uploaded ${body.originalName}`, "folder", String(body.folderId));
+    res.status(201).json({ ok: true });
+  } catch (error) {
+    if (storageKey) await fs.rm(path.join(env.storageRoot, storageKey), { force: true }).catch(() => undefined);
+    next(error);
+  }
+});
+
+app.post("/api/admin/permissions", requireAdmin, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({
+      userId: z.number().int().positive(),
+      folderId: z.number().int().positive().nullable().optional(),
+      fileId: z.number().int().positive().nullable().optional(),
+      permission: z.enum(["read", "download"]).default("download"),
+    }).parse(req.body);
+    if ((body.folderId ? 1 : 0) + (body.fileId ? 1 : 0) !== 1) {
+      return res.status(400).json({ error: "Choose exactly one folder or file target." });
+    }
+    await pool.query(
+      "INSERT INTO file_permissions (user_id, folder_id, file_id, permission, created_by) VALUES (?, ?, ?, ?, ?)",
+      [body.userId, body.folderId || null, body.fileId || null, body.permission, req.user!.id],
+    );
+    await recordActivity(req.user!.id, "PERMISSION_GRANTED", req, "File access permission granted", "user", String(body.userId));
+    res.status(201).json({ ok: true });
   } catch (error) { next(error); }
 });
 
