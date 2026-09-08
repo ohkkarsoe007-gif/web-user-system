@@ -1,0 +1,12 @@
+{
+  "name": "HAZAKBAN Access Terminal",
+  "short_name": "HAZAKBAN",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#071014",
+  "theme_color": "#071014",
+  "description": "Secure mobile access terminal",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
