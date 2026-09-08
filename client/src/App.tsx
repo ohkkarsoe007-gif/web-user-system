@@ -81,15 +81,28 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [users, setUsers] = useState<any[]>([]);
   const [commands, setCommands] = useState<any[]>([]);
   const [folders, setFolders] = useState<any[]>([]);
+  const [records, setRecords] = useState<any[]>([]);
   const [message, setMessage] = useState("");
   const [folderName, setFolderName] = useState("");
   const [commandText, setCommandText] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [targetFolderId, setTargetFolderId] = useState("");
   useEffect(() => { void Promise.all([api<{ users: any[] }>("/api/admin/users").then((r) => setUsers(r.users)), api<{ commands: any[] }>("/api/admin/commands").then((r) => setCommands(r.commands)), api<{ folders: any[] }>("/api/admin/folders").then((r) => setFolders(r.folders)), api<Record<string, number>>("/api/admin/summary").then(setSummary)]); }, []);
+  useEffect(() => {
+    const endpoints: Record<string, string> = {
+      loginLogs: "/api/admin/logs/login",
+      activityLogs: "/api/admin/logs/activity",
+      sessions: "/api/admin/sessions",
+      clientLinks: "/api/admin/client-links",
+      settings: "/api/admin/settings",
+      about: "/api/admin/about",
+    };
+    const endpoint = endpoints[tab];
+    if (endpoint) void api<any>(endpoint).then((result) => setRecords(result.rows || result.sessions || [])).catch(() => setRecords([]));
+  }, [tab]);
   async function createFolder(e: FormEvent) { e.preventDefault(); try { await api("/api/admin/folders", { method: "POST", body: JSON.stringify({ name: folderName }) }); setFolderName(""); setMessage("Folder created."); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to create folder."); } }
   async function createCommand(e: FormEvent) { e.preventDefault(); try { await api("/api/admin/commands", { method: "POST", body: JSON.stringify({ commandText, displayName, actionType: "download_folder", targetFolderId: Number(targetFolderId) }) }); setMessage("Command created."); setCommandText(""); setDisplayName(""); } catch (e) { setMessage(e instanceof Error ? e.message : "Unable to create command."); } }
-  const nav = [["overview", "Dashboard"], ["users", "Users"], ["files", "Files / Folders"], ["commands", "Terminal Commands"]];
+  const nav = [["overview", "Dashboard"], ["users", "Users"], ["loginLogs", "Login Logs"], ["activityLogs", "Activity Logs"], ["sessions", "Active Sessions"], ["files", "Files / Folders"], ["commands", "Terminal Commands"], ["clientLinks", "Client Links"], ["settings", "Settings"], ["about", "About"]];
   return <main className="admin-shell">
     <aside className="sidebar"><div className="brand-mark">HZB<span>•</span></div><div className="side-title">CONTROL PLANE</div>{nav.map(([id, label]) => <button className={tab === id ? "selected" : ""} onClick={() => setTab(id)} key={id}>▹ {label}</button>)}<div className="side-spacer" /><button onClick={onLogout}>↪ Logout</button></aside>
     <section className="admin-content"><header className="topbar"><div><p className="eyebrow">ADMINISTRATOR</p><h2>System control</h2></div><span className="user-chip">{user.email}</span></header>
@@ -98,6 +111,7 @@ function Admin({ user, onLogout }: { user: User; onLogout: () => void }) {
       {tab === "users" && <div className="panel table-panel"><h3>Registered users</h3><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Last login</th></tr></thead><tbody>{users.map((item) => <tr key={item.id}><td>{item.email}</td><td><span className="badge">{item.role}</span></td><td>{item.status}</td><td>{item.last_login_at || "Never"}</td></tr>)}</tbody></table></div>}
       {tab === "files" && <div className="split-grid"><div className="panel table-panel"><h3>Folders</h3>{folders.map((item) => <div className="list-row" key={item.id}><span>▰ {item.name}</span><code>{item.id}</code></div>)}<form onSubmit={createFolder} className="inline-form"><input value={folderName} onChange={(e) => setFolderName(e.target.value)} placeholder="New folder name" required /><button className="primary">Create</button></form></div><div className="panel info-panel"><p className="eyebrow">PRIVATE STORAGE</p><h3>Files are not public.</h3><p className="muted">Uploads are stored behind generated storage keys and can only be streamed after a permission check.</p></div></div>}
       {tab === "commands" && <div className="split-grid"><div className="panel table-panel"><h3>Active command definitions</h3>{commands.map((item) => <div className="list-row" key={item.id}><span><code>{item.command_text}</code> {item.display_name}</span><small>{item.folder_name || item.original_name || "—"}</small></div>)}</div><form className="panel form-panel" onSubmit={createCommand}><p className="eyebrow">NEW ALLOWLIST ENTRY</p><h3>Create folder download</h3><label>Command<input value={commandText} onChange={(e) => setCommandText(e.target.value)} placeholder="10 01" required /></label><label>Display name<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Training files" required /></label><label>Target folder<select value={targetFolderId} onChange={(e) => setTargetFolderId(e.target.value)} required><option value="">Choose folder</option>{folders.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><button className="primary">Add command</button></form></div>}
+      {["loginLogs", "activityLogs", "sessions", "clientLinks", "settings", "about"].includes(tab) && <div className="panel table-panel"><p className="eyebrow">ADMIN DATA VIEW</p><h3>{nav.find(([id]) => id === tab)?.[1]}</h3>{records.length === 0 ? <p className="muted">No records yet.</p> : <div className="record-list">{records.map((record, index) => <pre className="record" key={record.id || index}>{JSON.stringify(record, null, 2)}</pre>)}</div>}</div>}
     </section>
   </main>;
 }

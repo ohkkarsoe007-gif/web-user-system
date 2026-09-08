@@ -352,6 +352,53 @@ app.post("/api/admin/sessions/:id/revoke", requireAdmin, async (req: AuthedReque
   } catch (error) { next(error); }
 });
 
+app.get("/api/admin/client-links", requireAdmin, async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query("SELECT id, name, url, description, status, sort_order, created_at FROM client_links ORDER BY sort_order, name");
+    res.json({ rows });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/admin/client-links", requireAdmin, async (req: AuthedRequest, res, next) => {
+  try {
+    const body = z.object({
+      name: z.string().trim().min(1).max(150),
+      url: z.string().trim().url().max(500),
+      description: z.string().max(1000).nullable().optional(),
+    }).parse(req.body);
+    await pool.query("INSERT INTO client_links (name, url, description, created_by) VALUES (?, ?, ?, ?)", [body.name, body.url, body.description || null, req.user!.id]);
+    res.status(201).json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/admin/settings", requireAdmin, async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query("SELECT id, setting_key, setting_value, updated_at FROM settings ORDER BY setting_key");
+    res.json({ rows });
+  } catch (error) { next(error); }
+});
+
+app.put("/api/admin/settings/:key", requireAdmin, async (req: AuthedRequest, res, next) => {
+  try {
+    const key = String(req.params.key);
+    if (/(password|secret|token|api[_-]?key|credential)/i.test(key)) return res.status(400).json({ error: "Credential settings must use environment secrets." });
+    const value = z.string().max(5000).parse(req.body?.value);
+    await pool.query(
+      `INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
+      [key, value, req.user!.id],
+    );
+    res.json({ ok: true });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/admin/about", requireAdmin, async (_req, res, next) => {
+  try {
+    const [rows] = await pool.query("SELECT id, source, data_json, created_at, updated_at FROM about ORDER BY updated_at DESC");
+    res.json({ rows });
+  } catch (error) { next(error); }
+});
+
 app.get("/api/admin/commands", requireAdmin, async (_req, res, next) => {
   try {
     const [rows] = await pool.query(
